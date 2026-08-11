@@ -9,35 +9,23 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 @dataclass(frozen=True)
 class WorkspaceOptions:
-    """
-    可供 iPad 壁纸界面继续缩放 / 平移的“母版工作画布”。
+    """Wallpaper workspace options.
 
-    scale:
-        相对于 contain-fit 的倍率。
-        1.0 = 完整原图刚好放入画布。
-        < 1.0 = 缩小原图，四周留下更多可操作空间。
-        > 1.0 = 放大原图，可能有一部分超出画布。
-
-    offset_x / offset_y:
-        相对于居中位置的像素位移。
-        offset_x > 0 向右移动。
-        offset_y > 0 向下移动。
-
-    extension_mode:
-        "reflect" = 镜像延展，默认，通常最自然。
-        "edge" = 复制最邻近边缘像素，再模糊。
+    ``scale`` is relative to a contain-fit image. ``offset_x``/``offset_y``
+    move the clear image from its centered position. ``seam_blend_px`` controls
+    a narrow transition band between the clear image and blurred extension.
     """
 
     canvas_width: int
     canvas_height: int
-
     scale: float = 0.85
     offset_x: int = 0
     offset_y: int = 0
-
     blur_radius: float = 64.0
     background_brightness: float = 1.0
     extension_mode: str = "reflect"
+    seam_blend_px: int = 40
+    seam_curve: str = "smoothstep"
 
     def validate(self) -> None:
         if self.canvas_width <= 0 or self.canvas_height <= 0:
@@ -50,6 +38,10 @@ class WorkspaceOptions:
             raise ValueError("background_brightness 必须大于 0。")
         if self.extension_mode not in {"reflect", "edge"}:
             raise ValueError("extension_mode 仅支持 'reflect' 或 'edge'。")
+        if self.seam_blend_px < 0:
+            raise ValueError("seam_blend_px 不能小于 0。")
+        if self.seam_curve not in {"linear", "smoothstep"}:
+            raise ValueError("seam_curve 仅支持 'linear' 或 'smoothstep'。")
 
 
 @dataclass(frozen=True)
@@ -109,33 +101,22 @@ def calculate_placement(
     source_height: int,
     options: WorkspaceOptions,
 ) -> Placement:
-    """
-    计算清晰原图在工作画布中的实际尺寸和位置。
-
-    100% 定义为 contain fit：完整原图刚好全部放进画布。
-    用户 scale 再乘在 contain_scale 上，因此不同分辨率图片的行为一致。
-    """
+    """计算清晰原图在工作画布中的实际尺寸和位置。"""
     options.validate()
-
     contain_scale = min(
         options.canvas_width / source_width,
         options.canvas_height / source_height,
     )
     effective_scale = contain_scale * options.scale
-
     image_width = max(1, round(source_width * effective_scale))
     image_height = max(1, round(source_height * effective_scale))
-
-    centered_x = round((options.canvas_width - image_width) / 2)
-    centered_y = round((options.canvas_height - image_height) / 2)
-    x = centered_x + options.offset_x
-    y = centered_y + options.offset_y
+    x = round((options.canvas_width - image_width) / 2) + options.offset_x
+    y = round((options.canvas_height - image_height) / 2) + options.offset_y
 
     visible_left = max(0, x)
     visible_top = max(0, y)
     visible_right = min(options.canvas_width, x + image_width)
     visible_bottom = min(options.canvas_height, y + image_height)
-
     if visible_right <= visible_left or visible_bottom <= visible_top:
         raise ValueError("当前缩放 / 位移让清晰原图完全移出了画布。")
 
@@ -167,11 +148,6 @@ def resize_source(source: Image.Image, placement: Placement) -> Image.Image:
 
 
 def _reflect_indices(coordinates: np.ndarray, size: int) -> np.ndarray:
-    """
-    把任意整数坐标镜像折回 [0, size-1]。
-
-    与不断 reflect-pad 等价，但不需要真的创建巨大的 padding 数组。
-    """
     if size <= 1:
         return np.zeros_like(coordinates, dtype=np.int64)
     period = 2 * (size - 1)
@@ -190,14 +166,8 @@ def make_workspace_background(
     placement: Placement,
     options: WorkspaceOptions,
 ) -> Image.Image:
-    """
-    根据当前摆放位置自动填充所有暴露区域。
-
-    画布坐标先换算成相对于清晰图片的局部坐标；超出图片边界的坐标再用
-    reflect / edge 映射回图片内部。原图缩放或移动后，暴露区域会自动变化。
-    """
+    """根据当前摆放位置自动延展并模糊所有暴露区域。"""
     array = np.asarray(scaled_source.convert("RGB"), dtype=np.uint8)
-
     local_x = np.arange(options.canvas_width, dtype=np.int64) - placement.x
     local_y = np.arange(options.canvas_height, dtype=np.int64) - placement.y
 
@@ -208,51 +178,99 @@ def make_workspace_background(
         x_index = _edge_indices(local_x, placement.image_width)
         y_index = _edge_indices(local_y, placement.image_height)
 
-    background_array = array[y_index[:, None], x_index[None, :]]
-    background = Image.fromarray(background_array, mode="RGB")
-
+    background = Image.fromarray(array[y_index[:, None], x_index[None, :]], mode="RGB")
     if options.blur_radius > 0:
         background = background.filter(ImageFilter.GaussianBlur(options.blur_radius))
-
     if options.background_brightness != 1.0:
         background = ImageEnhance.Brightness(background).enhance(
             options.background_brightness
         )
-
     return background
 
 
-def paste_visible_sharp_region(
+def _apply_seam_curve(values: np.ndarray, curve: str) -> np.ndarray:
+    values = np.clip(values, 0.0, 1.0)
+    if curve == "linear":
+        return values
+    return values * values * (3.0 - 2.0 * values)
+
+
+def make_seam_alpha_mask(
+    placement: Placement,
+    seam_blend_px: int,
+    seam_curve: str = "smoothstep",
+) -> Image.Image:
+    """为清晰区域生成只作用于“真正暴露边”的窄幅融合蒙版。"""
+    width, height = placement.visible_width, placement.visible_height
+    if seam_blend_px <= 0:
+        return Image.new("L", (width, height), 255)
+
+    alpha = np.ones((height, width), dtype=np.float32)
+
+    def blend_axis(length: int, reverse: bool = False) -> np.ndarray:
+        band = max(1, min(seam_blend_px, length))
+        axis = np.arange(length, dtype=np.float32)
+        if reverse:
+            axis = axis[::-1]
+        return _apply_seam_curve(axis / float(band), seam_curve)
+
+    if placement.exposed_left > 0:
+        alpha = np.minimum(alpha, blend_axis(width)[None, :])
+    if placement.exposed_right > 0:
+        alpha = np.minimum(alpha, blend_axis(width, True)[None, :])
+    if placement.exposed_top > 0:
+        alpha = np.minimum(alpha, blend_axis(height)[:, None])
+    if placement.exposed_bottom > 0:
+        alpha = np.minimum(alpha, blend_axis(height, True)[:, None])
+
+    return Image.fromarray(
+        np.rint(alpha * 255.0).clip(0, 255).astype(np.uint8),
+        mode="L",
+    )
+
+
+def composite_visible_sharp_region(
     canvas: Image.Image,
     scaled_source: Image.Image,
     placement: Placement,
-) -> None:
-    """把落在画布内的清晰原图原样贴回去，模糊只存在于原图边界以外。"""
+    options: WorkspaceOptions,
+) -> Image.Image:
+    """用窄幅 alpha 过渡把清晰图贴回，消除清晰/模糊的硬接缝。"""
     crop_left = placement.visible_left - placement.x
     crop_top = placement.visible_top - placement.y
-    crop_right = crop_left + placement.visible_width
-    crop_bottom = crop_top + placement.visible_height
-
     visible_source = scaled_source.crop(
-        (crop_left, crop_top, crop_right, crop_bottom)
+        (
+            crop_left,
+            crop_top,
+            crop_left + placement.visible_width,
+            crop_top + placement.visible_height,
+        )
+    ).convert("RGBA")
+    visible_source.putalpha(
+        make_seam_alpha_mask(
+            placement,
+            options.seam_blend_px,
+            options.seam_curve,
+        )
     )
-    canvas.paste(
+
+    base = canvas.convert("RGBA")
+    base.alpha_composite(
         visible_source,
-        (placement.visible_left, placement.visible_top),
+        dest=(placement.visible_left, placement.visible_top),
     )
+    return base.convert("RGB")
 
 
 def render_workspace(
     source: Image.Image,
     options: WorkspaceOptions,
 ) -> tuple[Image.Image, Placement]:
-    """
-    生成可二次操作壁纸母版：自由缩放、自由平移，并自动模糊填充暴露区域。
-    """
+    """生成可二次操作壁纸母版，并对清晰/模糊交界做局部融合。"""
     placement = calculate_placement(source.width, source.height, options)
     scaled_source = resize_source(source, placement)
     canvas = make_workspace_background(scaled_source, placement, options)
-    paste_visible_sharp_region(canvas, scaled_source, placement)
+    canvas = composite_visible_sharp_region(canvas, scaled_source, placement, options)
     return canvas, placement
 
 
