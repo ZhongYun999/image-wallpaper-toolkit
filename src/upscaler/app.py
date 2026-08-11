@@ -10,7 +10,7 @@ def main() -> None:
     print("=" * 68)
     print("请选择功能：")
     print("  1. AI 超分（Real-ESRGAN）")
-    print("  2. Wallpaper Workspace（自由缩放 / 平移 / 自动模糊填边 / 接缝融合）")
+    print("  2. Wallpaper Workspace（缩放 / 平移 / 模糊填边 / 接缝融合 / 显示校准）")
 
     while True:
         choice = input("\n选择 [默认 2] > ").strip() or "2"
