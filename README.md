@@ -16,6 +16,8 @@
 - 根据暴露区域自动做 `reflect` / `edge` 边缘延展
 - 对扩展区域应用高斯模糊
 - 使用接缝融合减少清晰原图与模糊延展之间的矩形边界感
+- 在最终导出前调整亮度、对比度、饱和度与 Gamma
+- 提供可选的 iPad OLED 显示校准预设
 - 导出可继续在 iPad 壁纸界面缩放 / 拖动的高余量母版
 
 ## 目录结构
@@ -29,7 +31,8 @@ image-wallpaper-toolkit/
 ├─ docs/
 │  ├─ ARCHITECTURE.md
 │  ├─ WALLPAPER_WORKSPACE_V04.md
-│  └─ WALLPAPER_WORKSPACE_V041_SEAM_BLENDING.md
+│  ├─ WALLPAPER_WORKSPACE_V041_SEAM_BLENDING.md
+│  └─ DISPLAY_CALIBRATION_V05.md
 ├─ src/
 │  └─ upscaler/
 │     ├─ __init__.py
@@ -96,6 +99,8 @@ upscaler
  ↓
 Wallpaper Workspace
  ↓
+构图 / 填边 / 接缝融合 / 显示校准
+ ↓
 导出工作母版
  ↓
 iPad 壁纸界面继续缩放 / 平移
@@ -141,21 +146,48 @@ Real-ESRGAN 使用原生 x4 网络。
 
 `blur_radius`：扩展区域的高斯模糊强度。
 
-`seam_blend_px`：清晰原图和模糊扩展区之间的局部融合宽度。
+`seam_blend_px`：清晰原图和模糊扩展区之间的局部融合宽度。根据实际测试，较宽的融合带通常更接近旧 iOS 自动填充的连续过渡效果，因此 v0.5 默认使用 `64 px`。
 
-如果希望接近旧 iOS 自动填充的视觉效果，实际使用中通常需要让融合带有一定宽度，可以从：
+## v0.5 显示校准
+
+最终壁纸在电脑 IPS 与 iPad OLED 上可能产生明显观感差异。v0.5 在最终导出前增加四个可调参数：
 
 ```text
-40 px → 64 px → 96 px
+output_brightness
+output_contrast
+output_saturation
+output_gamma
 ```
 
-逐步测试；如果主体边缘被柔化过多，再往回减小。
+其中 `Gamma > 1` 会压暗中间调，适合处理 OLED 上暗部 / 中间调显得偏亮的情况。
+
+为了不破坏既有输出，默认仍为：
+
+```text
+亮度      100%
+对比度    100%
+饱和度    100%
+Gamma     1.00
+```
+
+同时提供两个可选预设：
+
+```text
+iPad OLED Dark
+亮度 95% / 对比度 100% / 饱和度 95% / Gamma 1.06
+
+iPad OLED Soft
+亮度 95% / 对比度 95% / 饱和度 92% / Gamma 1.04
+```
+
+这些预设只是快速起点，不是对 iPad 屏幕的精确模拟；最终仍应以实机观感为准。
 
 详细说明：
 
 ```text
 docs/WALLPAPER_WORKSPACE_V04.md
 docs/WALLPAPER_WORKSPACE_V041_SEAM_BLENDING.md
+docs/DISPLAY_CALIBRATION_V05.md
 ```
 
 ## 代码阅读顺序
@@ -182,6 +214,6 @@ workspace_cli.py
 
 其中：
 
-- `workspace.py`：壁纸工作画布核心算法
+- `workspace.py`：壁纸工作画布核心算法与显示校准
 - `workspace_cli.py`：工作画布控制台交互
 - `inference.py`：Real-ESRGAN 分块推理
