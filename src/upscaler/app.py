@@ -12,7 +12,7 @@ def main() -> None:
     print("请选择功能：")
     print("  1. AI 超分（Real-ESRGAN）")
     print("  2. iOS 风格边缘扩展（v0.3：固定边缘扩展）")
-    print("  3. Wallpaper Workspace（v0.4：自由缩放 / 平移 / 自动模糊填边）")
+    print("  3. Wallpaper Workspace（v0.4.1：自由缩放 / 平移 / 自动模糊填边 / 接缝融合）")
 
     while True:
         choice = input("\n选择 [默认 3] > ").strip() or "3"
