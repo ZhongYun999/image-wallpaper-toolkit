@@ -145,10 +145,35 @@ def choose_brightness() -> float:
         print("无效选项。")
 
 
+def choose_seam_blend() -> int:
+    print("\n请选择接缝融合宽度：")
+    print("  1. 0 px —— 不融合")
+    print("  2. 24 px —— 很窄，接近旧 iOS 的轻度过渡")
+    print("  3. 40 px —— 推荐起步")
+    print("  4. 64 px")
+    print("  5. 96 px —— 更柔和")
+    print("  6. 自定义")
+    fixed = {"1": 0, "2": 24, "3": 40, "4": 64, "5": 96}
+    while True:
+        choice = input("\n选择 [默认 3] > ").strip() or "3"
+        if choice in fixed:
+            return fixed[choice]
+        if choice == "6":
+            try:
+                value = int(input("输入融合宽度 px > "))
+                if value < 0:
+                    raise ValueError
+                return value
+            except ValueError:
+                print("请输入大于等于 0 的整数。")
+                continue
+        print("无效选项。")
+
+
 def run_workspace_builder() -> None:
     print("=" * 72)
-    print(" Wallpaper Workspace v0.4")
-    print(" 自由缩放 + 自由平移 + 自动模糊填边，用于导出可在 iPad 内继续调整的母版")
+    print(" Wallpaper Workspace v0.4.1")
+    print(" 自由缩放 + 自由平移 + 自动模糊填边 + 窄幅接缝融合")
     print("=" * 72)
 
     path = select_image_interactively()
@@ -165,6 +190,7 @@ def run_workspace_builder() -> None:
     blur_radius = choose_blur()
     extension_mode = choose_extension_mode()
     brightness = choose_brightness()
+    seam_blend_px = choose_seam_blend()
 
     options = WorkspaceOptions(
         canvas_width=canvas_w,
@@ -175,6 +201,7 @@ def run_workspace_builder() -> None:
         blur_radius=blur_radius,
         background_brightness=brightness,
         extension_mode=extension_mode,
+        seam_blend_px=seam_blend_px,
     )
 
     try:
@@ -199,6 +226,7 @@ def run_workspace_builder() -> None:
     print(f"  填充方式  : {extension_mode}")
     print(f"  模糊半径  : {blur_radius:g}px")
     print(f"  扩展亮度  : {brightness * 100:g}%")
+    print(f"  接缝融合  : {seam_blend_px}px")
     print("  生成式 AI : 不使用")
     print("=" * 72)
 
@@ -210,6 +238,12 @@ def run_workspace_builder() -> None:
         print(
             "这一步只是 Lanczos 几何缩放。如果希望放大后保留更多细节，"
             "建议先用主菜单的 AI 超分生成高分辨率母版，再送进 Workspace。"
+        )
+
+    if seam_blend_px > 0:
+        print(
+            "\n[接缝说明] 只会柔化真正接壤扩展区的边缘。"
+            "若仍明显可提高到 64~96px；若太软可降到 24px。"
         )
 
     if input("\n按 Enter 开始；输入 q 取消 > ").strip().lower() == "q":
