@@ -1,0 +1,4 @@
+numpy>=1.24
+Pillow>=10.0
+# torch 请优先使用你已有的 CUDA 环境。
+# 如需重新安装，请按 PyTorch 官方方式选择与你 CUDA 环境匹配的版本。
